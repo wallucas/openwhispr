@@ -92,17 +92,23 @@ class HotkeyManager {
     // If we're already using this hotkey AND it's actually registered, return success
     // Note: We need to check isRegistered because on first run, currentHotkey is set to the
     // default value but it's not actually registered yet.
-    const checkAccelerator = hotkey.startsWith("Fn+") ? hotkey.slice(3) : hotkey;
-    if (
-      hotkey === this.currentHotkey &&
-      hotkey !== "GLOBE" &&
-      !isRightSideModifier(hotkey) &&
-      globalShortcut.isRegistered(checkAccelerator)
-    ) {
+    try {
+      const checkAccelerator = hotkey.startsWith("Fn+") ? hotkey.slice(3) : hotkey;
+      if (
+        hotkey === this.currentHotkey &&
+        hotkey !== "GLOBE" &&
+        !isRightSideModifier(hotkey) &&
+        globalShortcut.isRegistered(checkAccelerator)
+      ) {
+        debugLogger.log(
+          `[HotkeyManager] Hotkey "${hotkey}" is already the current hotkey and registered, no change needed`
+        );
+        return { success: true, hotkey };
+      }
+    } catch (e) {
       debugLogger.log(
-        `[HotkeyManager] Hotkey "${hotkey}" is already the current hotkey and registered, no change needed`
+        `[HotkeyManager] isRegistered check failed for "${hotkey}": ${e.message}`
       );
-      return { success: true, hotkey };
     }
 
     // Unregister the previous hotkey (skip GLOBE and right-side modifiers - they use native listeners)
@@ -115,7 +121,13 @@ class HotkeyManager {
         ? this.currentHotkey.slice(3)
         : this.currentHotkey;
       debugLogger.log(`[HotkeyManager] Unregistering previous hotkey: "${prevAccelerator}"`);
-      globalShortcut.unregister(prevAccelerator);
+      try {
+        globalShortcut.unregister(prevAccelerator);
+      } catch (e) {
+        debugLogger.log(
+          `[HotkeyManager] Failed to unregister "${prevAccelerator}": ${e.message}`
+        );
+      }
     }
 
     try {

@@ -1,7 +1,7 @@
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
+const { execSync, spawnSync } = require("child_process");
 
 const REQUEST_TIMEOUT = 30000;
 const MAX_RETRIES = 3;
@@ -229,14 +229,34 @@ function downloadFile(url, dest, retryCount = 0) {
 
 function extractZip(zipPath, destDir) {
   if (process.platform === "win32") {
-    execSync(`tar -xf "${zipPath}" -C "${destDir}"`, { stdio: "inherit" });
+    // Use Node.js unzipper subprocess to avoid Cygwin/MSYS2 tar
+    // interpreting "C:" in Windows paths as a remote host
+    const script =
+      `const fs=require("fs"),u=require("unzipper");` +
+      `fs.createReadStream(${JSON.stringify(zipPath)})` +
+      `.pipe(u.Extract({path:${JSON.stringify(destDir)}}))` +
+      `.on("close",()=>process.exit(0))` +
+      `.on("error",e=>{console.error(e.message);process.exit(1)});`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      stdio: "inherit",
+      cwd: path.resolve(__dirname, "../.."),
+    });
+    if (result.status !== 0) {
+      throw new Error(`Zip extraction failed with exit code ${result.status}`);
+    }
   } else {
     execSync(`unzip -o "${zipPath}" -d "${destDir}"`, { stdio: "inherit" });
   }
 }
 
 function extractTarGz(tarPath, destDir) {
-  execSync(`tar -xzf "${tarPath}" -C "${destDir}"`, { stdio: "inherit" });
+  if (process.platform === "win32") {
+    // Use --force-local to prevent Cygwin/MSYS2 tar from
+    // interpreting "C:" in Windows paths as a remote host
+    execSync(`tar --force-local -xzf "${tarPath}" -C "${destDir}"`, { stdio: "inherit" });
+  } else {
+    execSync(`tar -xzf "${tarPath}" -C "${destDir}"`, { stdio: "inherit" });
+  }
 }
 
 function extractArchive(archivePath, destDir) {
