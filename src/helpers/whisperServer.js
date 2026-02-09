@@ -25,6 +25,8 @@ class WhisperServerManager {
     this.cachedServerBinaryPath = null;
     this.cachedFFmpegPath = null;
     this.canConvert = false;
+    // Force CPU variant (set to true if GPU variant fails to start)
+    this.forceCpuVariant = false;
   }
 
   getFFmpegPath() {
@@ -123,30 +125,45 @@ class WhisperServerManager {
     const platform = process.platform;
     const arch = process.arch;
     const platformArch = `${platform}-${arch}`;
-    const binaryName =
-      platform === "win32"
-        ? `whisper-server-${platformArch}.exe`
-        : `whisper-server-${platformArch}`;
-    const genericName = platform === "win32" ? "whisper-server.exe" : "whisper-server";
 
-    const candidates = [];
-
-    if (process.resourcesPath) {
-      candidates.push(
-        path.join(process.resourcesPath, "bin", binaryName),
-        path.join(process.resourcesPath, "bin", genericName)
-      );
+    // Determine variant for Windows/Linux (GPU if available, CPU otherwise)
+    let variant = "";
+    if ((platform === "win32" || platform === "linux") && !this.forceCpuVariant) {
+      const gpuDetector = require("./gpuDetector");
+      const recommendedVariant = gpuDetector.getRecommendedVariantSync();
+      variant = recommendedVariant === "gpu" ? "-gpu" : "";
     }
 
-    candidates.push(
-      path.join(__dirname, "..", "..", "resources", "bin", binaryName),
-      path.join(__dirname, "..", "..", "resources", "bin", genericName)
-    );
+    const ext = platform === "win32" ? ".exe" : "";
+    const binaryName = `whisper-server-${platformArch}${variant}${ext}`;
+    const cpuBinaryName = `whisper-server-${platformArch}${ext}`;
+    const genericName = `whisper-server${ext}`;
+
+    // Collect bin directories to search
+    const binDirs = [];
+    if (process.resourcesPath) {
+      binDirs.push(path.join(process.resourcesPath, "bin"));
+    }
+    binDirs.push(path.join(__dirname, "..", "..", "resources", "bin"));
+
+    // Build candidate list: GPU variant first, then CPU fallback, then generic
+    const candidates = [];
+    for (const dir of binDirs) {
+      candidates.push(path.join(dir, binaryName));
+      if (variant) {
+        candidates.push(path.join(dir, cpuBinaryName));
+      }
+      candidates.push(path.join(dir, genericName));
+    }
 
     for (const candidate of candidates) {
       if (fs.existsSync(candidate)) {
         try {
           fs.statSync(candidate);
+          const isGpu = candidate.includes("-gpu");
+          const label = isGpu ? "GPU (CUDA)" : platform === "darwin" ? "Metal" : "CPU";
+          debugLogger.info(`Found whisper-server binary: ${candidate} [${label}]`);
+
           this.cachedServerBinaryPath = candidate;
           return candidate;
         } catch {
